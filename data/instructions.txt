@@ -1,1 +1,1 @@
-Unzip MIMII dataset in this folder
+Unzip MIMII dataset and SelfRecordedFan in this folder
