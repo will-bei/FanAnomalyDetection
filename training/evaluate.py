@@ -30,7 +30,6 @@ def evaluate_model():
     print("\nEvaluating on MIMII Benchmark Data...")
     # Generate raw probability predictions (0.0 to 1.0)
     y_pred_probs_mimii = model.predict(X_val_mimii)
-    # Threshold at 0.5 to get binary decisions (0 = Normal, 1 = Abnormal)
     y_pred_mimii = (y_pred_probs_mimii > 0.5).astype(int).flatten()
 
     print("\nMIMII Classification Report:")

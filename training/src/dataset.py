@@ -6,10 +6,6 @@ from sklearn.model_selection import train_test_split
 
 class AudioFeatureExtractor:
     def __init__(self, sample_rate=16000, duration=1.0, n_mfcc=13, n_fft=400, hop_length=160):
-        """
-        Default parameters are optimized for TinyML (16kHz audio, 25ms frame, 10ms hop).
-        This results in a predictable feature map size for the microcontroller.
-        """
         self.sample_rate = sample_rate
         self.window_samples = int(sample_rate * duration)
         self.n_mfcc = n_mfcc
@@ -17,18 +13,13 @@ class AudioFeatureExtractor:
         self.hop_length = hop_length
 
     def load_and_window_audio(self, file_path):
-        """Loads an audio file and slices it into fixed-duration windows."""
         audio, sr = librosa.load(file_path, sr=self.sample_rate)
-        
-        # Split long audio into distinct 1-second chunks
         windows = []
         for i in range(0, len(audio) - self.window_samples + 1, self.window_samples):
             windows.append(audio[i : i + self.window_samples])
-            
         return windows
 
-    def extract_mfcc(self, audio_window):
-        """Extracts log-mel MFCC features from a single audio window."""
+    def extract_raw_mfcc_stack(self, audio_window):
         mfcc = librosa.feature.mfcc(
             y=audio_window, 
             sr=self.sample_rate, 
@@ -36,63 +27,88 @@ class AudioFeatureExtractor:
             n_fft=self.n_fft, 
             hop_length=self.hop_length
         )
-        # Transpose to make time the major axis: (Time_Steps, Features)
-        # This aligns better with 1D Convolutions or MobileNet-style layouts
-        return mfcc.T
-
-    def process_directory(self, base_path, pattern="**/*.wav"):
-        """Recursively finds all wav files and extracts features."""
-        search_path = os.path.join(base_path, pattern)
-        file_paths = glob.glob(search_path, recursive=True)
+        delta = librosa.feature.delta(mfcc)
+        delta2 = librosa.feature.delta(mfcc, order=2)
         
-        features = []
-        for path in file_paths:
-            try:
-                windows = self.load_and_window_audio(path)
-                for window in windows:
-                    mfcc_feat = self.extract_mfcc(window)
-                    features.append(mfcc_feat)
-            except Exception as e:
-                print(f"Error processing {path}: {e}")
-                
-        return np.array(features)
+        feature_map = np.stack([mfcc, delta, delta2], axis=-1)
+        return np.transpose(feature_map, (1, 0, 2))
 
 def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
-    """
-    Loads MIMII data. Since acoustic anomaly detection is often framed as an 
-    Unsupervised One-Class classification problem, we focus heavily on normal data.
-    """
     extractor = AudioFeatureExtractor()
     
-    print("Extracting Normal MIMII Features...")
-    normal_path = os.path.join(mimii_dir, "**/normal")
-    x_normal = extractor.process_directory(normal_path)
+    X_list = []
+    y_list = []
     
-    print("Extracting Abnormal MIMII Features...")
-    abnormal_path = os.path.join(mimii_dir, "**/abnormal")
-    x_abnormal = extractor.process_directory(abnormal_path)
+    # 1. Recursively find ALL .wav files inside the directory tree
+    # Replacing backslashes ensures Windows/Mac uniformity for glob parsing
+    clean_dir = mimii_dir.replace("\\", "/")
+    search_pattern = f"{clean_dir}/**/*.wav"
+    all_files = glob.glob(search_pattern, recursive=True)
     
-    # Create Labels: 0 for Normal, 1 for Abnormal
-    y_normal = np.zeros(len(x_normal))
-    y_abnormal = np.ones(len(x_abnormal))
-    
-    X = np.concatenate([x_normal, x_abnormal], axis=0)
-    y = np.concatenate([y_normal, y_abnormal], axis=0)
-    
-    # Add a channel dimension for CNN compatibility (Batch, Time, Features, 1)
-    X = np.expand_dims(X, axis=-1)
-    
-    return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+    if not all_files:
+        raise FileNotFoundError(f"No .wav files found in path: {search_pattern}")
+        
+    print(f"Found {len(all_files)} total audio files. Parsing explicit labels...")
 
-def prepare_self_recorded_data(self_recorded_dir):
-    """Loads target desk fan data (assumed completely normal for fine-tuning baseline)."""
+    # 2. Inspect every single file path explicitly to determine class
+    for path in all_files:
+        normalized_path = path.replace("\\", "/").lower()
+        
+        # Explicit string checks prevent path-bleed bugs
+        if "/normal/" in normalized_path:
+            label = 0
+        elif "/abnormal/" in normalized_path:
+            label = 1
+        else:
+            # Skip files that don't belong to a core split
+            continue
+            
+        try:
+            windows = extractor.load_and_window_audio(path)
+            for window in windows:
+                features = extractor.extract_raw_mfcc_stack(window)
+                X_list.append(features)
+                y_list.append(label)
+        except Exception as e:
+            print(f"Skipping corrupt file {path}: {e}")
+
+    X = np.array(X_list)
+    y = np.array(y_list)
+
+    # 3. Validation split
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+    
+    # 4. Apply Global Training Scale Calibration
+    print("Computing Explicit Global Training Statistics...")
+    global_mean = np.mean(X_train, axis=(0, 1), keepdims=True)
+    global_std = np.std(X_train, axis=(0, 1), keepdims=True) + 1e-8
+    
+    X_train = (X_train - global_mean) / global_std
+    X_val = (X_val - global_mean) / global_std
+    
+    return X_train, X_val, y_train, y_val
+
+def prepare_self_recorded_data(self_recorded_dir, global_mean=None, global_std=None):
     extractor = AudioFeatureExtractor()
-    print("Extracting Self-Recorded Normal Features...")
-    X = extractor.process_directory(self_recorded_dir)
-    X = np.expand_dims(X, axis=-1)
-    y = np.zeros(len(X)) 
+    clean_dir = self_recorded_dir.replace("\\", "/")
+    all_files = glob.glob(f"{clean_dir}/**/*.wav", recursive=True)
+    
+    X_list = []
+    for path in all_files:
+        try:
+            windows = extractor.load_and_window_audio(path)
+            for window in windows:
+                features = extractor.extract_raw_mfcc_stack(window)
+                X_list.append(features)
+        except Exception as e:
+            print(f"Skipping {path}: {e}")
+            
+    X = np.array(X_list)
+    
+    if global_mean is not None and global_std is not None:
+        X = (X - global_mean) / global_std
+        
+    y = np.zeros(len(X))
     return X, y
-
-if __name__ == "__main__":
-    # Quick sanity check execution
-    print("Dataset module ready.")

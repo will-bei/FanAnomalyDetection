@@ -11,6 +11,7 @@ TFLITE_OUTPUT_PATH = "deployment/model_data.tflite"
 EPOCHS = 20
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
+BIAS_SMOOTHING = 0.95
 
 def main():
     # Check to ensure output directories exist
@@ -40,11 +41,25 @@ def main():
     # Train the baseline model
     print("\nTraining Baseline Model...")
     
-    # Early stopping prevents overfitting if validation loss stalls
+    # Calculate the raw mathematical dynamic weights first
+    num_normal = np.sum(y_train == 0)
+    num_abnormal = np.sum(y_train == 1)
+    total_train_samples = len(y_train)
+    num_classes = 2
+
+    raw_weight_normal = total_train_samples / (num_classes * num_normal)
+    raw_weight_abnormal = total_train_samples / (num_classes * num_abnormal)
+
+    smoothed_weight_normal = (1.0 - BIAS_SMOOTHING) + (BIAS_SMOOTHING * raw_weight_normal)
+    smoothed_weight_abnormal = (1.0 - BIAS_SMOOTHING) + (BIAS_SMOOTHING * raw_weight_abnormal)
+
+    class_weight = {0: smoothed_weight_normal, 1: smoothed_weight_abnormal}
+
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
-            monitor='val_loss', 
-            patience=3, 
+            monitor='val_recall',       # Change from 'val_loss' to 'val_recall'
+            patience=4,                 # Give it an extra epoch to search
+            mode='max',                 # We want to MAXIMIZE recall
             restore_best_weights=True
         )
     ]
@@ -54,6 +69,7 @@ def main():
         validation_data=(X_val, y_val),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
+        class_weight=class_weight, # Injected!
         callbacks=callbacks,
         verbose=1
     )

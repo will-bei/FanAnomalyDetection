@@ -7,10 +7,17 @@ The project utilizes the MIMII Dataset for initial training/testing, and self-re
 MIMII Dataset: https://zenodo.org/records/3384388 
 
 # Environment
-I recommend using uv for setting up the project virtual environment. Simply run:
+I recommend using uv for setting up the project virtual environment. Simply activate the virtual environment via
+
+> .venv\Scripts\activate
+
+and then run:
 
 > uv pip install -r requirements.txt
 
-and activate the virtual environment via
+# Training
+To train the model from scratch, perform the following:
 
-> .venv\Scripts\activate
+> uv run .\training\train.py
+> uv run .\training\fine_tune.py
+> uv run .\training\evaluate.py
