@@ -1,7 +1,7 @@
 import os
 
 TFLITE_INPUT_PATH = "deployment/final_fine_tuned_model.tflite"
-HEADER_OUTPUT_PATH = "deployment/model_data.h"
+HEADER_OUTPUT_PATH = "deployment/anomaly_detector/model_data.h"
 
 def bin_to_c_array(tflite_path, header_path):
     """
