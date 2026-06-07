@@ -39,7 +39,7 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
     X_list = []
     y_list = []
     
-    # 1. Recursively find ALL .wav files inside the directory tree
+    # Recursively find ALL .wav files inside the directory tree
     # Replacing backslashes ensures Windows/Mac uniformity for glob parsing
     clean_dir = mimii_dir.replace("\\", "/")
     search_pattern = f"{clean_dir}/**/*.wav"
@@ -50,7 +50,7 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
         
     print(f"Found {len(all_files)} total audio files. Parsing explicit labels...")
 
-    # 2. Inspect every single file path explicitly to determine class
+    # Inspect every single file path explicitly to determine class
     for path in all_files:
         normalized_path = path.replace("\\", "/").lower()
         
@@ -75,12 +75,12 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
     X = np.array(X_list)
     y = np.array(y_list)
 
-    # 3. Validation split
+    # Validation split
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
     
-    # 4. Apply Global Training Scale Calibration
+    # Apply Global Training Scale Calibration
     print("Computing Explicit Global Training Statistics...")
     global_mean = np.mean(X_train, axis=(0, 1), keepdims=True)
     global_std = np.std(X_train, axis=(0, 1), keepdims=True) + 1e-8

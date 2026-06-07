@@ -33,7 +33,7 @@ def main():
 
     # Initialize and compile the model architecture
     print("\nInitializing TinyML CNN...")
-    input_shape = X_train.shape[1:]  # (Time_Steps, MFCC_Features, 1)
+    input_shape = X_train.shape[1:]
     model = create_tiny_anomaly_model(input_shape)
     model = compile_model(model, learning_rate=LEARNING_RATE)
     model.summary()
@@ -57,9 +57,9 @@ def main():
 
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
-            monitor='val_recall',       # Change from 'val_loss' to 'val_recall'
-            patience=4,                 # Give it an extra epoch to search
-            mode='max',                 # We want to MAXIMIZE recall
+            monitor='val_recall',
+            patience=4,
+            mode='max',
             restore_best_weights=True
         )
     ]
@@ -69,7 +69,7 @@ def main():
         validation_data=(X_val, y_val),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        class_weight=class_weight, # Injected!
+        class_weight=class_weight,
         callbacks=callbacks,
         verbose=1
     )
@@ -83,7 +83,7 @@ def main():
     print("\nConverting Model to TFLite...")
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     
-    # Enable default optimizations (this shrinks the float32 model weights)
+    # Enable default optimizations
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     
     tflite_model = converter.convert()
