@@ -24,16 +24,15 @@ constexpr int kMelCount = 128;
 constexpr int kFftBins = (kNfft / 2) + 1;
 constexpr int kFrameCount = 1 + (kAudioSamples / kHopLength);
 constexpr int kFeatureChannels = 3;
-constexpr int kFeatureCount = kFrameCount * kMfccCount * kFeatureChannels;
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kAmin = 1.0e-10f;
 constexpr float kTopDb = 80.0f;
-constexpr float kAnomalyThreshold = 0.5f;
+constexpr float kAnomalyThreshold = 4.727662f;
 
-// If AllocateTensors() fails on Serial Monitor, raise this to 112 * 1024 or 128 * 1024.
-constexpr int kTensorArenaSize = 96 * 1024;
-
+// CNN structures and their underlying operators use a fair amount of temporary scratch memory. 
+// Raised to 128 KB to guarantee no allocation faults during convolution calculations.
+constexpr int kTensorArenaSize = 128 * 1024;
 alignas(16) uint8_t tensor_arena[kTensorArenaSize];
 
 tflite::MicroErrorReporter micro_error_reporter;
@@ -143,7 +142,7 @@ void computePowerSpectrumForFrame(int frame_index) {
   }
 }
 
-float melFilterEnergy(int mel_index) {
+void melFilterEnergy(int mel_index, float* energies) {
   float left = mel_edges[mel_index];
   float center = mel_edges[mel_index + 1];
   float right = mel_edges[mel_index + 2];
@@ -161,8 +160,7 @@ float melFilterEnergy(int mel_index) {
 
     energy += power_spectrum[bin] * weight;
   }
-
-  return max(energy, kAmin);
+  *energies = max(energy, kAmin);
 }
 
 void computeMfcc() {
@@ -173,7 +171,8 @@ void computeMfcc() {
 
     float max_db = -100000.0f;
     for (int m = 0; m < kMelCount; ++m) {
-      log_mel[m] = 10.0f * log10f(melFilterEnergy(m));
+      melFilterEnergy(m, &log_mel[m]);
+      log_mel[m] = 10.0f * log10f(log_mel[m]);
       if (log_mel[m] > max_db) {
         max_db = log_mel[m];
       }
@@ -197,7 +196,7 @@ void computeMfcc() {
 void computeDelta(const float src[kFrameCount][kMfccCount], float dst[kFrameCount][kMfccCount]) {
   constexpr int width = 9;
   constexpr int half_width = width / 2;
-  constexpr float denom = 60.0f;  // 2 * sum(i*i), i=1..4
+  constexpr float denom = 60.0f;
 
   for (int t = 0; t < kFrameCount; ++t) {
     for (int c = 0; c < kMfccCount; ++c) {
@@ -218,27 +217,18 @@ int8_t quantizeInput(float value) {
   return static_cast<int8_t>(quantized);
 }
 
-float dequantizeOutput() {
-  if (output->type == kTfLiteInt8) {
-    return (static_cast<int32_t>(output->data.int8[0]) - output->params.zero_point) * output->params.scale;
-  }
-  if (output->type == kTfLiteUInt8) {
-    return (static_cast<int32_t>(output->data.uint8[0]) - output->params.zero_point) * output->params.scale;
-  }
-  return output->data.f[0];
-}
-
-int tensorElementCount(const TfLiteTensor *tensor) {
-  int count = 1;
-  for (int i = 0; i < tensor->dims->size; ++i) {
-    count *= tensor->dims->data[i];
-  }
-  return count;
+float dequantizeValue(int8_t quantized, float scale, int32_t zero_point) {
+  return (static_cast<int32_t>(quantized) - zero_point) * scale;
 }
 
 bool fillModelInput() {
-  if (tensorElementCount(input) < kFeatureCount) {
-    Serial.println("Model input tensor is smaller than expected.");
+  // Validate that the model shape matches our expected height, width, and channels dimensions
+  if (input->dims->size != 4) {
+    Serial.println("Error: Expected a 4D input tensor [Batch, Height, Width, Channels]");
+    return false;
+  }
+  if (input->dims->data[1] != kFrameCount || input->dims->data[2] != kMfccCount || input->dims->data[3] != kFeatureChannels) {
+    Serial.println("Error: Model dimension tracking mismatch.");
     return false;
   }
 
@@ -246,12 +236,15 @@ bool fillModelInput() {
   computeDelta(mfcc, delta);
   computeDelta(delta, delta2);
 
-  int feature_index = 0;
+  // 2D CNN tensor mapping
+  // Access memory as index = ((f * kMfccCount + c) * kFeatureChannels) + channel
   for (int frame = 0; frame < kFrameCount; ++frame) {
     for (int coeff = 0; coeff < kMfccCount; ++coeff) {
-      input->data.int8[feature_index++] = quantizeInput(mfcc[frame][coeff]);
-      input->data.int8[feature_index++] = quantizeInput(delta[frame][coeff]);
-      input->data.int8[feature_index++] = quantizeInput(delta2[frame][coeff]);
+      int base_offset = ((frame * kMfccCount) + coeff) * kFeatureChannels;
+      
+      input->data.int8[base_offset + 0] = quantizeInput(mfcc[frame][coeff]);
+      input->data.int8[base_offset + 1] = quantizeInput(delta[frame][coeff]);
+      input->data.int8[base_offset + 2] = quantizeInput(delta2[frame][coeff]);
     }
   }
 
@@ -271,7 +264,7 @@ bool hasFullAudioBuffer() {
   return full;
 }
 
-}  // namespace
+}
 
 void setup() {
   Serial.begin(115200);
@@ -331,11 +324,52 @@ void loop() {
 
   PDM.end();
 
-  if (fillModelInput() && interpreter->Invoke() == kTfLiteOk) {
-    float anomaly_score = dequantizeOutput();
-    Serial.println(anomaly_score >= kAnomalyThreshold ? "yes" : "no");
-  } else {
-    Serial.println("no");
+  // 1. Populate the input tensor with your MFCC / Delta features
+  if (fillModelInput()) {
+    
+    int total_elements = kFrameCount * kMfccCount * kFeatureChannels;
+    
+    // 2. CRITICAL: Take a physical snapshot of the input BEFORE invoking the model
+    // This protects your data from being overwritten by TFLite's buffer reuse optimization.
+    static int8_t baseline_input_snapshot[kFrameCount * kMfccCount * kFeatureChannels];
+    memcpy(baseline_input_snapshot, input->data.int8, total_elements * sizeof(int8_t));
+
+    // 3. Run the model inference safely
+    if (interpreter->Invoke() == kTfLiteOk) {
+      float total_squared_error = 0.0f;
+      
+      float input_scale = input->params.scale;
+      int32_t input_zero_point = input->params.zero_point;
+      
+      float output_scale = output->params.scale;
+      int32_t output_zero_point = output->params.zero_point;
+
+      for (int i = 0; i < total_elements; ++i) {
+        // 1. Dequantize the saved input snapshot using the model's actual scale
+        // This scales your large Arduino features down to match Python's training range
+        float original = (static_cast<float>(baseline_input_snapshot[i]) - input_zero_point) * input_scale;
+        
+        // 2. Safely extract and dequantize the output tensor byte
+        float reconstructed = 0.0f;
+        if (output->type == kTfLiteFloat32) {
+          reconstructed = output->data.f[i];
+        } else {
+          reconstructed = (static_cast<float>(output->data.int8[i]) - output_zero_point) * output_scale;
+        }
+        
+        // 3. Compute standard squared error deviation
+        float error = original - reconstructed;
+        total_squared_error += error * error;
+      }
+
+      float anomaly_score = total_squared_error / static_cast<float>(total_elements);
+
+      Serial.print("Anomaly Score (MSE): ");
+      Serial.println(anomaly_score, 4);
+      Serial.println(anomaly_score >= kAnomalyThreshold ? "ANOMALY DETECTED (yes)" : "NORMAL (no)");
+    } else {
+      Serial.println("Error: Interpreter Invoke failed.");
+    }
   }
 
   clearAudioBuffer();

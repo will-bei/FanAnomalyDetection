@@ -4,7 +4,7 @@ import numpy as np
 import librosa
 from sklearn.model_selection import train_test_split
 
-class AudioFeatureExtractor:
+class modelAudioFeatureExtractor:
     def __init__(self, sample_rate=16000, duration=1.0, n_mfcc=13, n_fft=400, hop_length=160):
         self.sample_rate = sample_rate
         self.window_samples = int(sample_rate * duration)
@@ -34,12 +34,12 @@ class AudioFeatureExtractor:
         return np.transpose(feature_map, (1, 0, 2))
 
 def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
-    extractor = AudioFeatureExtractor()
+    extractor = modelAudioFeatureExtractor()
     
     X_list = []
     y_list = []
     
-    # 1. Recursively find ALL .wav files inside the directory tree
+    # Recursively find ALL .wav files inside the directory tree
     # Replacing backslashes ensures Windows/Mac uniformity for glob parsing
     clean_dir = mimii_dir.replace("\\", "/")
     search_pattern = f"{clean_dir}/**/*.wav"
@@ -50,7 +50,7 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
         
     print(f"Found {len(all_files)} total audio files. Parsing explicit labels...")
 
-    # 2. Inspect every single file path explicitly to determine class
+    # Inspect every single file path explicitly to determine class
     for path in all_files:
         normalized_path = path.replace("\\", "/").lower()
         
@@ -75,12 +75,12 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
     X = np.array(X_list)
     y = np.array(y_list)
 
-    # 3. Validation split
+    # Validation split
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
     
-    # 4. Apply Global Training Scale Calibration
+    # Apply Global Training Scale Calibration
     print("Computing Explicit Global Training Statistics...")
     global_mean = np.mean(X_train, axis=(0, 1), keepdims=True)
     global_std = np.std(X_train, axis=(0, 1), keepdims=True) + 1e-8
@@ -91,7 +91,7 @@ def prepare_mimii_data(mimii_dir, test_size=0.2, random_state=42):
     return X_train, X_val, y_train, y_val
 
 def prepare_self_recorded_data(self_recorded_dir, global_mean=None, global_std=None):
-    extractor = AudioFeatureExtractor()
+    extractor = modelAudioFeatureExtractor()
     clean_dir = self_recorded_dir.replace("\\", "/")
     all_files = glob.glob(f"{clean_dir}/**/*.wav", recursive=True)
     

@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import tensorflow as tf
-from src.dataset import prepare_mimii_data
+from training.src.dataset_model import prepare_mimii_data
 from src.model import create_tiny_anomaly_model, compile_model
 
 MIMII_DATA_DIR = "data/fan"             # MIMII dataset subset
