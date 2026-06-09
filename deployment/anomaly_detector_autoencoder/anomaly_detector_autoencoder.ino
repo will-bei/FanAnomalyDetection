@@ -258,7 +258,7 @@ void loop()
 
     Serial.print("Score: ");       Serial.print(mse, 6);
     Serial.print(" | Smoothed: "); Serial.print(smoothed_mse, 6);
-    Serial.print(" | Threshold: "); Serial.print(kAnomalyThreshold, 6);
+    // Serial.print(" | Threshold: "); Serial.print(kAnomalyThreshold, 6);
     Serial.print(" | Normalized Score: "); Serial.print(normalized_score, 6);
     Serial.print(" | Anomaly: ");  Serial.println(is_anomaly ? "YES" : "NO");
 
