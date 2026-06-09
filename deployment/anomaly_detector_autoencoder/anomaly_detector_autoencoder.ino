@@ -15,7 +15,7 @@ constexpr int NUM_FRAMES = 16;
 constexpr int FEATURE_SIZE = N_MELS_FULL * NUM_FRAMES; // 104*16=1664
 
 // Threshold written by evaluate_autoencoder.py
-constexpr float kAnomalyThreshold = 0.050237f;
+constexpr float kAnomalyThreshold = 0.049993f;
 
 constexpr float kAlpha = 0.3f;
 float smoothed_mse = 0.0f;
@@ -244,8 +244,8 @@ void loop()
     //// linearly shifted by about 2.6 up.
     smoothed_mse = (kAlpha * mse) + ((1.0f - kAlpha) * smoothed_mse);
     // Known bounds based on observations
-    constexpr float kObservedMin = 2.6f;
-    constexpr float kObservedMax = 3.4f;
+    constexpr float kObservedMin = 0.3f;
+    constexpr float kObservedMax = 1.8f;
 
     // Linearly map [2.6, 3.4] to [0.0, 1.0]
     float normalized_score = (smoothed_mse - kObservedMin) / (kObservedMax - kObservedMin);
@@ -253,8 +253,7 @@ void loop()
     // Constrain to ensure we don't get values outside [0, 1] due to spikes
     normalized_score = constrain(normalized_score, 0.0f, 1.0f);
 
-    // Update anomaly logic to use the new range
-    bool is_anomaly = (normalized_score > kAnomalyThreshold);
+    bool is_anomaly = (normalized_score > 0.3);
     // bool is_anomaly = (smoothed_mse > kAnomalyThreshold);
 
     Serial.print("Score: ");       Serial.print(mse, 6);

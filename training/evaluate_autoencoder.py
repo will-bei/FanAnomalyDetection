@@ -17,7 +17,7 @@ MIMII_DATA_ROOT = "data/fan"
 NORMAL_DIR = "data/SelfRecordedFan/normal"
 ABNORMAL_DIR = "data/SelfRecordedFan/abnormal"
 TFLITE_MODEL_PATH = "deployment/final_fine_tuned_model.tflite"
-OUTPUT_PLOT_PATH = "training/model_evaluation_results.png"
+OUTPUT_PLOT_PATH = "training/autoencoder_evaluation_results.png"
 ARDUINO_SKETCH_PATH = os.path.join("deployment", "anomaly_detector_autoencoder", "anomaly_detector_autoencoder.ino")
 
 def enforce_shape(x, target_h=TARGET_H, target_w=TARGET_W):
@@ -117,10 +117,8 @@ def main():
     
     y_probs_combined = np.concatenate([mse_normal, mse_abnormal])
 
-    print("\nAutotuning threshold to aggressively prioritize Anomaly Catch Rate...")
-    target_recall = 0.95
-    best_percentile = 75
-    best_threshold = np.percentile(mse_abnormal, 100 - (target_recall * 100))
+    print("\nTuning threshold...")
+    best_threshold = np.percentile(mse_normal, 35)
 
     # for candidate_percentile in range(50, 87):
     #     candidate_threshold = np.percentile(mse_normal, candidate_percentile)
